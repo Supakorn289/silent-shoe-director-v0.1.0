@@ -12,7 +12,21 @@ const apiKey=process.env.GEMINI_API_KEY||'';
 const defaultModel=process.env.GEMINI_MODEL||'gemini-3.5-flash-lite';
 const mime={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.mjs':'text/javascript; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.svg':'image/svg+xml','.ico':'image/x-icon'};
 const send=(res,status,body)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(body))};
-async function bodyOf(req,limit=22*1024*1024){return new Promise((resolve,reject)=>{let chunks=[],length=0;req.on('data',chunk=>{length+=chunk.length;if(length>limit){reject(Object.assign(new Error('ส่งรูป/ข้อมูลเกินขนาด 22 MB ต่อหนึ่งคำขอ'),{status:413}));req.destroy();return}chunks.push(chunk)});req.on('end',()=>{try{resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}'))}catch{reject(Object.assign(new Error('รูปแบบ JSON ไม่ถูกต้อง'),{status:400}))}});req.on('error',reject)})}
+async function bodyOf(req,limit=22*1024*1024){
+ if(req.body!==undefined && req.body!==null){
+  const value=req.body;
+  let raw;
+  if(Buffer.isBuffer(value))raw=value.toString('utf8');
+  else if(typeof value==='string')raw=value;
+  else if(typeof value==='object'){
+   if(Buffer.byteLength(JSON.stringify(value),'utf8')>limit)throw Object.assign(new Error('คำขอ JSON มีขนาดเกินที่รองรับ'),{status:413});
+   return value;
+  }
+  else throw Object.assign(new Error('รูปแบบ request body ไม่ถูกต้อง'),{status:400});
+  if(Buffer.byteLength(raw,'utf8')>limit)throw Object.assign(new Error('คำขอ JSON มีขนาดเกินที่รองรับ'),{status:413});
+  try{return JSON.parse(raw||'{}')}catch{throw Object.assign(new Error('รูปแบบ JSON ไม่ถูกต้อง'),{status:400})}
+ }
+ return new Promise((resolve,reject)=>{let chunks=[],length=0;req.on('data',chunk=>{length+=chunk.length;if(length>limit){reject(Object.assign(new Error('ส่งรูป/ข้อมูลเกินขนาด 22 MB ต่อหนึ่งคำขอ'),{status:413}));req.destroy();return}chunks.push(chunk)});req.on('end',()=>{try{resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}'))}catch{reject(Object.assign(new Error('รูปแบบ JSON ไม่ถูกต้อง'),{status:400}))}});req.on('error',reject)})}
 async function skillsFor(stage){const names=stage==='vision'?['shoe-truth.md','silent-review.md']:['shoe-truth.md','silent-review.md','hand-styling.md','micro-continuity.md'];const chunks=await Promise.all(names.map(async name=>(await readFile(path.join(skillRoot,name),'utf8')).slice(0,2500)));return names.map((n,i)=>`## SKILL ${n}\n${chunks[i]}`).join('\n\n')}
 function decodeImage(value){const m=/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/i.exec(value||'');if(!m||m[2].length>12_000_000)throw Object.assign(new Error('รูปต้องเป็น PNG/JPG/WebP ขนาดไม่เกินประมาณ 9MB'),{status:400});return {mimeType:m[1],data:m[2]}}
 function parseJson(raw){let text=String(raw||'').trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');try{return JSON.parse(text)}catch{throw Object.assign(new Error('Gemini ตอบ JSON ไม่ครบหรือผิดรูปแบบ กรุณาลองอีกครั้ง'),{status:502,code:'INVALID_GEMINI_JSON'})}}
@@ -23,7 +37,7 @@ async function gemini({prompt,image,model,maxOutputTokens=3000}){
  const parts=[{text:prompt}];if(image)parts.push({inlineData:decodeImage(image)});
  let response;
  for(let attempt=0;attempt<2;attempt++){
-  try{response=await fetch(endpoint,{method:'POST',headers:{'x-goog-api-key':apiKey,'content-type':'application/json'},body:JSON.stringify({contents:[{role:'user',parts}],generationConfig:{responseMimeType:'application/json',maxOutputTokens}}),signal:AbortSignal.timeout(60000)})}
+  try{response=await fetch(endpoint,{method:'POST',headers:{'x-goog-api-key':apiKey,'content-type':'application/json'},body:JSON.stringify({contents:[{role:'user',parts}],generationConfig:{responseMimeType:'application/json',maxOutputTokens}}),signal:AbortSignal.timeout(22000)})}
   catch(e){throw Object.assign(new Error('ติดต่อ Gemini ไม่สำเร็จ: '+e.message),{status:503})}
   if(response.ok)break;
   if(response.status===503&&attempt===0){await new Promise(r=>setTimeout(r,1500));continue}break;
@@ -51,7 +65,7 @@ async function direct(req,res){const b=await bodyOf(req);const p=normalizedProje
  }catch(e){return send(res,e.status||502,{error:e.message,code:e.code||'DIRECTOR_FAILED'})}}
 async function models(req,res){if(!apiKey)return send(res,200,{models:[],configured:false});try{const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models',{headers:{'x-goog-api-key':apiKey},signal:AbortSignal.timeout(7000)});if(!r.ok)throw new Error('Model list unavailable');const d=await r.json();return send(res,200,{configured:true,models:(d.models||[]).filter(x=>x.supportedGenerationMethods?.includes('generateContent')).map(x=>({id:x.name.replace('models/',''),name:x.displayName})).slice(0,75)})}catch{return send(res,200,{configured:true,models:[],note:'ไม่สามารถอ่านรายการโมเดลได้'})}}
 async function staticFile(req,res,pathname){let decoded;try{decoded=decodeURIComponent(pathname)}catch{return send(res,400,{error:'URL invalid'})};if(decoded==='/')decoded='/index.html';const filepath=path.resolve(publicRoot,'.'+decoded);if(!filepath.startsWith(publicRoot+path.sep))return send(res,403,{error:'Forbidden'});try{const st=await stat(filepath);if(!st.isFile())return send(res,404,{error:'Not found'});const bytes=await readFile(filepath);res.writeHead(200,{'content-type':mime[path.extname(filepath)]||'application/octet-stream','x-content-type-options':'nosniff','cache-control':'no-cache','content-length':bytes.length});res.end(req.method==='HEAD'?undefined:bytes)}catch{return send(res,404,{error:'Not found'})}}
-const server=http.createServer(async(req,res)=>{
+async function handleRequest(req,res){
  res.setHeader('x-content-type-options','nosniff');
  const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);try{
  if(req.method==='GET'&&url.pathname==='/api/health')return send(res,200,{ok:true,version:VERSION,geminiConfigured:Boolean(apiKey),localOnly:host==='127.0.0.1',service:'silent-shoe-director'});
@@ -62,7 +76,8 @@ const server=http.createServer(async(req,res)=>{
  if(!['GET','HEAD'].includes(req.method))return send(res,405,{error:'Method not allowed'});
  return await staticFile(req,res,url.pathname);
  }catch(e){if(!res.writableEnded)send(res,e.status||500,{error:e.message||'Internal server error'})}
-});
+}
+const server=http.createServer(handleRequest);
 // Cross-platform entrypoint detection: file:// + Windows backslashes is NOT a valid file URL.
 // pathToFileURL handles Windows drive letters, spaces and URL escaping correctly.
 const isCliEntrypoint = Boolean(process.argv[1]) && import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href;
@@ -80,4 +95,4 @@ if(isCliEntrypoint){
  });
 }
 
-export {server};
+export {server,handleRequest};

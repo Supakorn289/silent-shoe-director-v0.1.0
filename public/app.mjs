@@ -31,8 +31,30 @@ function toggleDemoAction(key,checked){const current=new Set(state.studio.demoAc
 function compile(){const warnings=[];if(!state.product.name.trim())warnings.push('ยังไม่ได้ระบุชื่อรองเท้า');if(!state.references.overall?.dataUrl)warnings.push('ยังไม่มีรูปสินค้าภาพรวม — Prompt จะระบุว่าไม่มีภาพจริง ไม่รับประกันความแม่นยำ');
  drafted=true;state.savedOutput=true;state.promptEdits={};renderOutput();persistLater();flash(warnings.length?`สร้าง Prompt แล้ว (ยังมีข้อควรตรวจ): ${warnings.join(' · ')}`:'สร้าง Prompt สำเร็จ ดูรายชื่อภาพจริงและคัดลอกไป Google Flow ได้เลย')}
 function aiProjectPayload(){return {...state,references:Object.fromEntries(Object.entries(state.references).map(([k,v])=>[k,v?{...v,dataUrl:null}:null]))};}
-async function request(url,payload){const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});let result={};try{result=await response.json()}catch{}if(!response.ok)throw Error(result.error||`HTTP ${response.status}`);return result}
-async function analyze(role){const ref=state.references[role];if(!ref?.dataUrl)return flash('กรุณาอัปโหลดรูปนี้ก่อนวิเคราะห์','error');busy(true,`กำลังวิเคราะห์: ${PHOTO_ROLES[role].name}`);try{const result=await request('/api/vision',{role,imageDataUrl:ref.dataUrl,project:aiProjectPayload(),model:state.studio.model});state.analyses[role]=result.analysis;state.promptEdits={};persistLater();renderUploads();renderOutput();flash(role==='endFrame'?`วิเคราะห์ continuity frame สำเร็จ · AI อ่านทั้งภาพนี้และบริบทของ SH_01/SH_02 แล้ว`:`วิเคราะห์ภาพ ${ref.fileName} สำเร็จ · AI แยกข้อเท็จจริงกับสิ่งที่ยังไม่เห็นแล้ว`)}catch(e){flash(`AI วิเคราะห์ภาพไม่สำเร็จ: ${e.message}`,'error')}finally{busy(false)}}
+async function request(url,payload){const serialized=JSON.stringify(payload);if(new TextEncoder().encode(serialized).length>4_200_000)throw Error('คำขอใหญ่เกิน 4.2MB กรุณาลดขนาดภาพก่อนวิเคราะห์');const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:serialized});let result={};try{result=await response.json()}catch{}if(!response.ok)throw Error(result.error||`HTTP ${response.status}`);return result}
+async function imageForApi(dataUrl){
+ if(typeof dataUrl!=='string'||!dataUrl.startsWith('data:image/'))throw Error('ไม่มีภาพที่ใช้วิเคราะห์');
+ if(dataUrl.length<2_700_000)return dataUrl;
+ const img=new Image();
+ await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(Error('ไม่สามารถเปิดภาพเพื่อลดขนาดก่อนส่ง Gemini'));img.src=dataUrl});
+ const canvas=document.createElement('canvas');
+ const ctx=canvas.getContext('2d',{alpha:false});
+ if(!ctx)throw Error('Canvas image conversion ไม่พร้อมใช้งาน');
+ let bound=1600;
+ for(let attempt=0;attempt<7;attempt++){
+  const scale=Math.min(1,bound/Math.max(img.naturalWidth,img.naturalHeight));
+  canvas.width=Math.max(1,Math.round(img.naturalWidth*scale));
+  canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));
+  ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(img,0,0,canvas.width,canvas.height);
+  const quality=Math.max(.53,.84-attempt*.055);
+  const output=canvas.toDataURL('image/jpeg',quality);
+  if(output.length<2_700_000)return output;
+  bound=Math.floor(bound*.79);
+ }
+ throw Error('ภาพยังใหญ่เกินสำหรับ Vercel API กรุณาลดความละเอียดก่อน');
+}
+async function analyze(role){const ref=state.references[role];if(!ref?.dataUrl)return flash('กรุณาอัปโหลดรูปนี้ก่อนวิเคราะห์','error');busy(true,`กำลังวิเคราะห์: ${PHOTO_ROLES[role].name}`);try{const apiImageDataUrl=await imageForApi(ref.dataUrl);const result=await request('/api/vision',{role,imageDataUrl:apiImageDataUrl,project:aiProjectPayload(),model:state.studio.model});state.analyses[role]=result.analysis;state.promptEdits={};persistLater();renderUploads();renderOutput();flash(role==='endFrame'?`วิเคราะห์ continuity frame สำเร็จ · AI อ่านทั้งภาพนี้และบริบทของ SH_01/SH_02 แล้ว`:`วิเคราะห์ภาพ ${ref.fileName} สำเร็จ · AI แยกข้อเท็จจริงกับสิ่งที่ยังไม่เห็นแล้ว`)}catch(e){flash(`AI วิเคราะห์ภาพไม่สำเร็จ: ${e.message}`,'error')}finally{busy(false)}}
 async function improve(){busy(true,'AI Director กำลังออกแบบช็อตรีวิวรองเท้า');try{const result=await request('/api/direct',{project:aiProjectPayload(),model:state.studio.model});state.aiPlan=result.plan;drafted=true;state.savedOutput=true;state.promptEdits={};persistLater();renderOutput();flash('Gemini วางกล้อง/การจับรองเท้าให้แล้ว โดยยังใช้ภาพจริงของสินค้า ฉาก และมือเป็นกฎหลักก่อน preset')}catch(e){flash(`ไม่สามารถใช้ Gemini ได้: ${e.message} · ยังสร้าง Prompt แบบไม่ใช้ AI ได้`,'error')}finally{busy(false)}}
 function exportProject(){persistLater();const data={...state,format:'SILENT_SHOE_DIRECTOR_PROJECT',schemaVersion:1,appVersion:VERSION,exportedAt:new Date().toISOString()};doDownload(`silent-shoe-project-${new Date().toISOString().slice(0,10)}.json`,JSON.stringify(data,null,2));flash('Export Project สำเร็จ · รวมข้อมูลและรูปที่อัปโหลดเป็น JSON แล้ว (ไม่รวม API Key)')}
 async function importProject(file){if(!file)return;try{if(file.size>52*1024*1024)throw Error('ไฟล์ Import ใหญ่เกิน 52MB');const json=JSON.parse(await file.text());const parsed=validateImport(json);if(!confirm('Import จะเขียนทับโปรเจกต์ที่เปิดอยู่ กรุณา Export สำรองไว้ก่อน ยืนยันนำเข้าหรือไม่?'))return;state={...parsed,promptEdits:parsed.promptEdits||{}};drafted=Boolean(state.savedOutput||state.aiPlan);renderAll();persistLater();flash(`นำเข้า ${file.name} สำเร็จ · รูป/สไตล์มือ/Prompt พร้อมใช้งาน`)}catch(e){flash(`Import ไม่สำเร็จ: ${e.message}`,'error')}finally{$('#importInput').value=''}}
