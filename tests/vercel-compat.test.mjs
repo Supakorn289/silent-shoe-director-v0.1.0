@@ -14,7 +14,7 @@ function fakeResponse(){
 test('Vercel module import does NOT auto-listen on a TCP port',()=>{assert.equal(server.listening,false)});
 test('Vercel health handler returns local API version via explicit mapping',async()=>{
  const res=fakeResponse();await health({method:'GET',url:'/ignored',headers:{}},res);
- assert.equal(res.statusCode,200);assert.equal(JSON.parse(res.body).version,'0.1.4');
+ assert.equal(res.statusCode,200);assert.equal(JSON.parse(res.body).version,'0.1.5');
 });
 test('Vercel request parser supports pre-parsed POST JSON without re-reading an exhausted stream',async()=>{
  const res=fakeResponse();await vision({method:'POST',url:'/ignored',headers:{},body:{role:'invalid-test-role'}},res);

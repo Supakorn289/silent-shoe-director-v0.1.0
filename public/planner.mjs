@@ -1,4 +1,4 @@
-export const VERSION='0.1.4';
+export const VERSION='0.1.5';
 export const SHOE_TYPES={flipflop:'รองเท้าแตะหูคีบ',slide:'รองเท้าแตะแบบสวม',sneaker:'รองเท้าผ้าใบ',loafer:'รองเท้าคัทชู/โลฟเฟอร์',heel:'รองเท้าส้นสูง',other:'รองเท้าประเภทอื่น'};
 export const TABLES={linen:{label:'ผ้าลินินสีครีม',en:'cream linen-covered tabletop, warm diffused window light, soft neutral shadows'},wood:{label:'โต๊ะไม้โทนอุ่น',en:'warm oak tabletop, gentle sunlight, subtle natural wood grain'},white:{label:'โต๊ะสตูดิโอสีขาว',en:'clean matte off-white studio product table, balanced shadow-free softbox light'},cafe:{label:'โต๊ะคาเฟ่มินิมอล',en:'minimalist café tabletop, warm ivory and wood palette, restrained decor'},stone:{label:'โต๊ะหินโทนพรีเมียม',en:'light beige stone tabletop, controlled high-end product lighting, restrained soft reflection'}};
 export const NAILS={natural:{label:'ธรรมชาติ',en:'clean short natural nails, no polish'},nude:{label:'นู้ด',en:'short-to-medium nude polished nails'},red:{label:'แดงไวน์',en:'short glossy wine-red manicure'},french:{label:'เฟรนช์',en:'subtle French-tip manicure'},pink:{label:'ชมพูอ่อน',en:'pale pink glossy manicure'}};
@@ -18,13 +18,13 @@ export const PHOTO_ROLES={
 const validImage=x=>typeof x==='string'&&/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/i.test(x);
 const allowedDemoActionKeys=()=>Object.keys(DEMO_ACTIONS);
 const dedupe=items=>[...new Set(items)];
-export const initialProject=()=>({format:'SILENT_SHOE_DIRECTOR_PROJECT',schemaVersion:1,appVersion:VERSION,product:{name:'',type:'flipflop',color:'',facts:'',identityRules:'',price:''},studio:{table:'linen',nail:'nude',sleeve:'knit',accessory:'bracelet',handCount:'two',demoActions:['showPair','rotatePair','detailTouch'],lighting:'soft',motion:'minimal',style:'heroDetail',clipCount:2,model:'gemini-3.5-flash-lite'},references:{overall:null,side:null,detail:null,sole:null,scene:null,hand:null,endFrame:null},analyses:{},aiPlan:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
+export const initialProject=()=>({format:'SILENT_SHOE_DIRECTOR_PROJECT',schemaVersion:1,appVersion:VERSION,product:{name:'',type:'flipflop',color:'',facts:'',identityRules:'',price:''},studio:{table:'linen',nail:'nude',sleeve:'knit',accessory:'bracelet',handCount:'two',demoActions:['showPair','rotatePair','detailTouch'],lighting:'soft',motion:'minimal',style:'heroDetail',clipCount:2,clipDuration:8,model:'gemini-3.5-flash-lite'},references:{overall:null,side:null,detail:null,sole:null,scene:null,hand:null,endFrame:null},analyses:{},aiPlan:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
 export const safeText=(v,n=400)=>String(v??'').slice(0,n);
 export function normalizedProject(input){
  const initial=initialProject();if(!input||typeof input!=='object')return initial;
  const product={...initial.product,...(input.product||{})}, studio={...initial.studio,...(input.studio||{})};
  const refs={...initial.references};for(const k of Object.keys(refs)){const item=input.references?.[k];if(item&&typeof item==='object'){const dataUrl=validImage(item.dataUrl)?item.dataUrl:null;refs[k]={fileName:safeText(item.fileName,240),dataUrl,note:safeText(item.note,3000),unavailable:Boolean(item.unavailable)};}}
- studio.clipCount=Number(studio.clipCount)===1?1:2;for(const [k,map,fallback] of [['table',TABLES,'linen'],['nail',NAILS,'nude'],['sleeve',SLEEVES,'knit'],['accessory',ACCESSORIES,'bracelet'],['style',SHOT_MODES,'heroDetail']])if(!map[studio[k]])studio[k]=fallback;
+ studio.clipCount=Number(studio.clipCount)===1?1:2;studio.clipDuration=Number(studio.clipDuration)===10?10:8;for(const [k,map,fallback] of [['table',TABLES,'linen'],['nail',NAILS,'nude'],['sleeve',SLEEVES,'knit'],['accessory',ACCESSORIES,'bracelet'],['style',SHOT_MODES,'heroDetail']])if(!map[studio[k]])studio[k]=fallback;
  if(!SHOE_TYPES[product.type])product.type='other';
  studio.handCount=studio.handCount==='one'?'one':'two';studio.motion=['static','minimal','gentle'].includes(studio.motion)?studio.motion:'minimal';
  studio.lighting=['soft','daylight','studio'].includes(studio.lighting)?studio.lighting:'soft';
@@ -79,21 +79,32 @@ function actionBeatText(project,index){
   `5–8s: ${end}.`
  ];
 }
+// Duration is explicit, never inferred from the number of shots. Eight-second projects retain their original three beats.
+function durationBeats(p,index,beats){
+ if(p.studio.clipDuration!==10)return beats;
+ const detail=index===0
+  ? 'Hold the same continuous composition for a readable close study of one REAL photographed identifying feature (toe shape, strap attachment or visible texture). Move the shoe gently, without changing grip, inventing a new angle or adding a cut.'
+  : 'Keep the actual carry-over grip, table and lighting; dwell on one verified visible product detail in the same take. Maintain clean hands and do not reveal unseen sides or unsupported features.';
+ return [beats[0],beats[1],`5–8s: ${detail}`,beats[2].replace(/^5–8s:/,'8–10s:')];
+}
 export function shotSpec(project,index){
  const p=normalizedProject(project), count=p.studio.clipCount;
  const style=SHOT_MODES[p.studio.style];
  const one=count===1;
- const beats=actionBeatText(p,index);
+ const beats=durationBeats(p,index,actionBeatText(p,index));
  const actionSummary=demoActionSummary(p);
  return index===0?{
  id:'SH_01',title:one?'รีวิวช็อตเดียว · Hero + Detail':'เปิดตัวสินค้า · จับและโชว์',intent:one?'One take: show hero shape then one supported detail':'Establish exact shoe identity and present carefully',
  focus:one?'overview and one selected visible detail':'overall',
- beats:one?beats:[`0–2s: ${beats[0].replace(/^0–2s: /,'')}`,`2–5s: ${beats[1].replace(/^2–5s: /,'')}`,`5–8s: ${beats[2].replace(/^5–8s: /,'')}`],
+ beats,
  motion:'locked-off / very slow shallow push-in only when it improves visibility',continuity:`Opening shot. Establish same hands, manicure, sleeves, accessories and entire tabletop for shot 2. Selected demo actions: ${actionSummary}.`,recommended:['overall','scene','hand']
  }: {id:'SH_02',title:style.label+' · รายละเอียดต่อเนื่อง',intent:style.clips[1],focus:p.studio.style==='pairSingle'?'single while second shoe stays anchored':'supported shape, upper texture and details',beats:[
  `0–2s: Begin with the same shoe orientation, hand-contact points, sleeves, bracelet and table composition as SH_01 final frame (if actual frame uploaded).`,
  `2–5s: ${beats[1].replace(/^2–5s: /,'')} Keep product identity dominant and avoid undocumented reveals.`,
- `5–8s: ${beats[2].replace(/^5–8s: /,'')} Use the same hand identity and calm tabletop atmosphere.`
+  ...(p.studio.clipDuration===10?[
+   `5–8s: ${beats[2].replace(/^5–8s: /,'')} Continue without cuts or an unsupported reveal.`,
+    `8–10s: ${beats[3].replace(/^8–10s: /,'')} Use the same hand identity and calm tabletop atmosphere; settle the actual final frame for the next clip.`
+   ]:[`5–8s: ${beats[2].replace(/^5–8s: /,'')} Use the same hand identity and calm tabletop atmosphere.`])
  ],
  motion:'minimal stable product-follow; no automatic zoom oscillation',continuity:'Use the actual uploaded SH_01 final frame when available. Carry hand contact points, product orientation, table props, and warm light forward. No location change.',recommended:['overall','scene','hand','detail','side','endFrame']};
 }
@@ -134,7 +145,7 @@ export function composePrompt(project,index){
   `- ${shoeBehaviorGuidance(p.product.type)}`,
   ...(blocked.length?[`- Requested but blocked by guardrails: ${blocked.map(k=>DEMO_ACTIONS[k].label).join(', ')}. Replace with a safer elegant hold or detail touch.`]:[])
  ];
- const lines=[referenceManifest(p,index),'',`SILENT SHOE DIRECTOR — ${spec.id} · VERTICAL 9:16 · 8 SECONDS`,`One continuous tabletop shoe product shot. STRICTLY SILENT: no speech, voice-over, music, audible sound effects, ambient audio, sound track, subtitles, captions, artificial on-screen text, price tags, call-to-action overlays or watermarks. Preserve only product branding that is physically present in the source photos; do not invent or rewrite logos.`,
+ const lines=[referenceManifest(p,index),'',`SILENT SHOE DIRECTOR — ${spec.id} · VERTICAL 9:16 · ${st.clipDuration} SECONDS`,`One continuous tabletop shoe product shot. STRICTLY SILENT: no speech, voice-over, music, audible sound effects, ambient audio, sound track, subtitles, captions, artificial on-screen text, price tags, call-to-action overlays or watermarks. Preserve only product branding that is physically present in the source photos; do not invent or rewrite logos.`,
  `PRODUCT FIDELITY (highest priority):\n${viewLocks(p)}`,
  `ENVIRONMENT LOCK: ${env} Keep this exact tabletop background throughout the clip; no try-on room, no people beyond hands, no cut to other locations. ${st.lighting==='daylight'?'Diffused daylight.':st.lighting==='studio'?'Controlled neutral studio softbox.':'Soft smooth attractive product lighting.'}`,
  `HAND IDENTITY LOCK: ${handDirection(st)} ${p.references.hand?.dataUrl?'The uploaded actual hand photo is authoritative for visible nails, sleeves, skin tone and accessories; preset styling is only a fallback and MUST NOT override that photo.':'No actual hand image supplied; follow the user selected styling presets.'} Use the same hands for the entire shot and across any second clip. No accidental changes in nail color, jewelry or sleeve style.`,
@@ -148,7 +159,7 @@ export function composePrompt(project,index){
  extra?`EVIDENCE-BASED SHOT IDEAS: ${extra}`:'',
  `NEGATIVE: face, head, full body, feet wearing shoes, spoken presenter, voiceover, narration, music, singing, audio, subtitles, TikTok caption, promo text, generated letters, unrelated story, shifting background, extra shoes, mirror-swapped left/right pair, mutated outsole, hallucinated heel or strap, deformed fingers, extra fingers, impossible grip, product color drift, strange camera transition.`
  ];return lines.filter(Boolean).join('\n\n')}
-export function createProduction(project){const p=normalizedProject(project);return {name:p.product.name||'Shoe Review',app:'Silent Shoe Director',version:VERSION,format:'SILENT_SHOE_DIRECTOR_FLOW_PACK',direction:'Tabletop-only · hands only · silent · no overlays',shots:Array.from({length:p.studio.clipCount},(_,i)=>({id:`SH_0${i+1}`,seconds:8,title:shotSpec(p,i).title,referencePlan:referencePlan(p,i).all.map(({dataUrl,...rest})=>rest),prompt:composePrompt(p,i)})),createdAt:new Date().toISOString()}}
+export function createProduction(project){const p=normalizedProject(project);return {name:p.product.name||'Shoe Review',app:'Silent Shoe Director',version:VERSION,format:'SILENT_SHOE_DIRECTOR_FLOW_PACK',direction:'Tabletop-only · hands only · silent · no overlays',clipDurationSeconds:p.studio.clipDuration,shots:Array.from({length:p.studio.clipCount},(_,i)=>({id:`SH_0${i+1}`,seconds:p.studio.clipDuration,title:shotSpec(p,i).title,referencePlan:referencePlan(p,i).all.map(({dataUrl,...rest})=>rest),prompt:composePrompt(p,i)})),createdAt:new Date().toISOString()}}
 export function validateImport(raw){if(!raw||raw.format!=='SILENT_SHOE_DIRECTOR_PROJECT'||raw.schemaVersion!==1)throw Error('ไฟล์ Import ไม่ใช่ Silent Shoe Director schema v1');
  const json=JSON.stringify(raw);if(json.length>52*1024*1024)throw Error('ไฟล์โปรเจกต์ใหญ่เกิน 52MB');
  for(const k of Object.keys(raw.references||{})){if(!Object.hasOwn(PHOTO_ROLES,k))throw Error(`พบ role รูปภาพที่ไม่รู้จัก: ${k}`);const d=raw.references[k]?.dataUrl;if(d&&!validImage(d))throw Error(`รูป ${k} ไม่ใช่ภาพ PNG/JPG/WebP ที่รองรับ`)}return normalizedProject(raw)}

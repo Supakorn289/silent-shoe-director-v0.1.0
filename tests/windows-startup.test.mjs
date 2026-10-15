@@ -22,7 +22,7 @@ test('npm dev entrypoint binds an actual HTTP port and stays alive',async()=>{
   assert.equal(server.child.exitCode,null,'the dev process must remain alive');
   const response=await fetch(`http://127.0.0.1:${port}/api/health`);
   assert.equal(response.status,200); const body=await response.json();
-  assert.equal(body.version,'0.1.4'); assert.equal(body.ok,true);
+  assert.equal(body.version,'0.1.5'); assert.equal(body.ok,true);
   const home=await fetch(`http://127.0.0.1:${port}/`);assert.equal(home.status,200);
  }finally{await stop(server.child)}
 });
