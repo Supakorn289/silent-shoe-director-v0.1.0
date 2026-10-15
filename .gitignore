@@ -1,3 +1,4 @@
-#ignore file .env
+2. ยกเว้นไฟล์ environment ที่เก็บความลับ หรือรหัสผ่านต่างๆ
 .env
-.env.example
+.env.local
+config.json
